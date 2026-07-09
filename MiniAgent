@@ -1,0 +1,107 @@
+import os
+import json
+from openai import OpenAI
+
+client = OpenAI(
+    api_key=os.environ.get("GroqApi", "YOURAPIKEY"),
+    base_url="https://api.groq.com/openai/v1",
+)
+
+MODEL = "llama-3.3-70b-versatile"
+
+# --- 1. Les "outils" que l'agent peut utiliser ---
+
+def add(a: float, b: float) -> float:
+    return a + b
+
+def multiply(a: float, b: float) -> float:
+    return a * b
+
+AVAILABLE_TOOLS = {"add": add, "multiply": multiply}
+
+# --- 2. La description des outils pour le modèle (le "menu") ---
+
+TOOLS_SCHEMA = [
+    {
+        "type": "function",
+        "function": {
+            "name": "add",
+            "description": "Additionne deux nombres",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "a": {"type": "number"},
+                    "b": {"type": "number"},
+                },
+                "required": ["a", "b"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "multiply",
+            "description": "Multiplie deux nombres",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "a": {"type": "number"},
+                    "b": {"type": "number"},
+                },
+                "required": ["a", "b"],
+            },
+        },
+    },
+]
+
+# --- 3. La boucle de l'agent ---
+
+SYSTEM_PROMPT = (
+    "Tu es un agent qui resout des problemes en appelant des outils. "
+    "IMPORTANT: n'appelle qu'UN SEUL outil a la fois, avec des nombres concrets "
+    "(jamais un autre appel de fonction comme argument). "
+    "Si un calcul depend du resultat d'un calcul precedent, attends le resultat "
+    "de l'outil avant de faire l'appel suivant."
+)
+
+def run_agent(user_message: str):
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": user_message},
+    ]
+
+    while True:
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=messages,
+            tools=TOOLS_SCHEMA,
+        )
+        msg = response.choices[0].message
+
+        # Cas 1 : le modèle veut appeler un outil
+        if msg.tool_calls:
+            messages.append(msg)
+            for call in msg.tool_calls:
+                fn_name = call.function.name
+                args = json.loads(call.function.arguments)
+                result = AVAILABLE_TOOLS[fn_name](**args)
+
+                print(f"  [outil appelé] {fn_name}({args}) -> {result}")
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": str(result),
+                })
+            # on relance la boucle pour laisser le modèle continuer
+            continue
+
+        # Cas 2 : le modèle a fini, il répond en texte
+        return msg.content
+
+
+if __name__ == "__main__":
+    question = "Combien font (12 + 7) multiplié par 3 ?"
+    print("Question:", question)
+    reponse = run_agent(question)
+    print("Réponse finale:", reponse)
