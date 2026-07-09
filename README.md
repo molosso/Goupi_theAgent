@@ -1,4 +1,4 @@
-# AI Agent 🤖
+# AI Agent 
 
 A lightweight AI agent powered by Groq.
 
